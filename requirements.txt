@@ -5,3 +5,6 @@ numpy>=2.3.4,<2.4
 av>=16.1.0,<18
 soundfile==0.13.1
 plotly>=6.0,<7
+gruut==2.4.0
+gruut-lang-ru==2.0.1
+gruut-lang-en==2.0.1

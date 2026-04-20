@@ -9,13 +9,14 @@ import streamlit as st
 from faster_whisper import WhisperModel
 
 
-DEFAULT_MODEL_KEY = "balanced_medium"
+DEFAULT_MODEL_KEY = "balanced"
 APP_CACHE_ROOT = Path(tempfile.gettempdir()) / "dialect_rech_cache"
 MODEL_CACHE_ROOT = APP_CACHE_ROOT / "models"
 HF_CACHE_ROOT = APP_CACHE_ROOT / "huggingface"
 
 HF_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
 MODEL_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+os.environ.pop("TRANSFORMERS_CACHE", None)
 os.environ.setdefault("HF_HOME", str(HF_CACHE_ROOT))
 os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_CACHE_ROOT / "hub"))
 
@@ -31,37 +32,29 @@ class ModelConfig:
 
 
 MODEL_CONFIGS: dict[str, ModelConfig] = {
-    "turbo_fast": ModelConfig(
-        key="turbo_fast",
-        label="Turbo: быстро и качественно",
-        model_id="mobiuslabsgmbh/faster-whisper-large-v3-turbo",
-        description="Самый быстрый вариант высокого класса. Хорош для длинных файлов и облачного запуска.",
+    "light": ModelConfig(
+        key="light",
+        label="Лёгкая: быстро",
+        model_id="Systran/faster-whisper-small",
+        description="Самый лёгкий и быстрый режим. Подходит для черновой расшифровки и длинных файлов.",
         beam_size=2,
-        chunk_length=24,
-    ),
-    "quality_large": ModelConfig(
-        key="quality_large",
-        label="Large v3: максимум качества",
-        model_id="Systran/faster-whisper-large-v3",
-        description="Максимальное качество распознавания, но требует больше памяти и работает медленнее.",
-        beam_size=2,
-        chunk_length=20,
-    ),
-    "balanced_medium": ModelConfig(
-        key="balanced_medium",
-        label="Medium: баланс скорости и точности",
-        model_id="Systran/faster-whisper-medium",
-        description="Рекомендуемый режим по умолчанию. Обычно стабильнее всего на Streamlit Cloud.",
-        beam_size=3,
         chunk_length=28,
     ),
-    "fast_small": ModelConfig(
-        key="fast_small",
-        label="Small: самый лёгкий режим",
-        model_id="Systran/faster-whisper-small",
-        description="Подходит для слабых машин и быстрой черновой расшифровки.",
+    "balanced": ModelConfig(
+        key="balanced",
+        label="Сбалансированная: качество и стабильность",
+        model_id="Systran/faster-whisper-medium",
+        description="Рекомендуемый режим по умолчанию. Лучший баланс точности, скорости и стабильности.",
         beam_size=3,
-        chunk_length=30,
+        chunk_length=24,
+    ),
+    "accurate": ModelConfig(
+        key="accurate",
+        label="Точная: улучшенное качество",
+        model_id="Systran/faster-whisper-large-v2",
+        description="Более тяжёлая multilingual-модель для лучшего качества. Медленнее, но стабильнее turbo-вариантов.",
+        beam_size=2,
+        chunk_length=18,
     ),
 }
 
@@ -113,20 +106,17 @@ def transcribe_audio(audio_path: str, model_key: str) -> dict[str, object]:
         raise FileNotFoundError("Временный аудиофайл не найден.")
 
     model_config = get_model_config(model_key)
-    model = load_whisper_model(model_key)
-    segments, info = model.transcribe(
-        audio_path,
-        language="ru",
-        task="transcribe",
-        beam_size=model_config.beam_size,
-        best_of=max(3, model_config.beam_size),
-        temperature=0.0,
-        vad_filter=True,
-        condition_on_previous_text=False,
-        word_timestamps=False,
-        without_timestamps=False,
-        chunk_length=model_config.chunk_length,
-    )
+    try:
+        model = load_whisper_model(model_key)
+        segments, info = _transcribe_with_model(model, audio_path, model_config)
+        used_model = model_config
+    except Exception:
+        if model_key == DEFAULT_MODEL_KEY:
+            raise
+        fallback_config = get_model_config(DEFAULT_MODEL_KEY)
+        model = load_whisper_model(DEFAULT_MODEL_KEY)
+        segments, info = _transcribe_with_model(model, audio_path, fallback_config)
+        used_model = fallback_config
 
     segment_items = []
     texts = []
@@ -149,5 +139,21 @@ def transcribe_audio(audio_path: str, model_key: str) -> dict[str, object]:
         "detected_language": getattr(info, "language", None),
         "language_probability": getattr(info, "language_probability", None),
         "duration": getattr(info, "duration", None),
-        "model_label": model_config.label,
+        "model_label": used_model.label,
     }
+
+
+def _transcribe_with_model(model: WhisperModel, audio_path: str, model_config: ModelConfig):
+    return model.transcribe(
+        audio_path,
+        language="ru",
+        task="transcribe",
+        beam_size=model_config.beam_size,
+        best_of=max(2, model_config.beam_size),
+        temperature=0.0,
+        vad_filter=True,
+        condition_on_previous_text=False,
+        word_timestamps=False,
+        without_timestamps=False,
+        chunk_length=model_config.chunk_length,
+    )

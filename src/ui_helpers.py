@@ -20,7 +20,8 @@ SESSION_DEFAULTS: dict[str, Any] = {
     "orthography_text": "",
     "transcription_text": "",
     "segments": [],
-    "selected_model_key": "balanced_medium",
+    "selected_model_key": "balanced",
+    "transcription_mode": "ru_practical",
     "last_processed_model_key": None,
     "result_timestamp": None,
 }

@@ -13,7 +13,7 @@ from src.audio_utils import (
     inspect_audio_bytes,
     persist_uploaded_file,
 )
-from src.transcription import normalize_orthography, practical_transcription
+from src.transcription import build_transcription, get_transcription_modes, normalize_orthography
 from src.ui_helpers import (
     build_export_payload,
     clear_results,
@@ -45,9 +45,19 @@ def main() -> None:
 def _render_header() -> None:
     st.title("Диалектная речь: орфография и транскрипция")
     st.caption(
-        "Загрузите аудиофайл, получите черновую орфографическую расшифровку и "
-        "автоматическую широкую фонетическую транскрипцию, затем при необходимости отредактируйте их вручную."
+        "Загрузите аудиофайл, получите орфографическую расшифровку и отдельную транскрипцию, затем при необходимости отредактируйте результат."
     )
+    st.markdown(
+        "[Репозиторий проекта](https://github.com/lehabuzanov/dialect_rech)"
+    )
+    with st.expander("Краткая инструкция"):
+        st.write(
+            "1. Загрузите аудиофайл.\n"
+            "2. При необходимости выберите режим распознавания.\n"
+            "3. Нажмите `Распознать`.\n"
+            "4. При необходимости переключите формат транскрипции.\n"
+            "5. Скачайте результаты."
+        )
 
 
 def _render_sidebar() -> None:
@@ -64,6 +74,23 @@ def _render_sidebar() -> None:
     )
     st.session_state.selected_model_key = selected_key
     st.sidebar.caption(get_model_description(selected_key))
+
+    transcription_modes = get_transcription_modes()
+    mode_keys = list(transcription_modes.keys())
+    mode_index = mode_keys.index(st.session_state.get("transcription_mode", "ru_practical"))
+    selected_mode = st.sidebar.radio(
+        "Формат транскрипции",
+        options=mode_keys,
+        index=mode_index,
+        format_func=lambda key: transcription_modes[key],
+    )
+    previous_mode = st.session_state.get("transcription_mode")
+    st.session_state.transcription_mode = selected_mode
+    if previous_mode != selected_mode and st.session_state.get("orthography_text", "").strip():
+        st.session_state.transcription_text = build_transcription(
+            st.session_state.orthography_text,
+            selected_mode,
+        )
 
 
 def _handle_file_upload() -> None:
@@ -142,7 +169,7 @@ def _run_recognition() -> None:
         with st.spinner("Распознаю аудио..."):
             result = transcribe_audio(audio_path, model_key=model_key)
         orthography = normalize_orthography(str(result["text"]))
-        transcription = practical_transcription(orthography)
+        transcription = build_transcription(orthography, st.session_state.transcription_mode)
 
         st.session_state.orthography_text = orthography
         st.session_state.transcription_text = transcription
@@ -179,11 +206,14 @@ def _render_results() -> None:
     if st.button("Обновить транскрипцию из орфографии", width="stretch"):
         normalized = normalize_orthography(st.session_state.orthography_text)
         st.session_state.orthography_text = normalized
-        st.session_state.transcription_text = practical_transcription(normalized)
+        st.session_state.transcription_text = build_transcription(
+            normalized,
+            st.session_state.transcription_mode,
+        )
         set_status("Транскрипция обновлена из орфографической записи.", "success")
 
     st.text_area(
-        "Транскрипция (широкая фонетическая)",
+        "Транскрипция",
         height=220,
         key="transcription_text",
     )
