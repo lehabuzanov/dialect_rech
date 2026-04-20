@@ -23,6 +23,8 @@ SESSION_DEFAULTS: dict[str, Any] = {
     "orthography_editor": "",
     "transcription_text": "",
     "transcription_editor": "",
+    "pending_orthography_editor": None,
+    "pending_transcription_editor": None,
     "segments": [],
     "selected_model_key": "balanced",
     "transcription_mode": "ru_practical",
@@ -92,3 +94,16 @@ def clear_results(keep_uploaded_file: bool = True) -> None:
 
     for key, value in preserved.items():
         st.session_state[key] = value
+
+
+def apply_pending_editor_updates() -> None:
+    pending_orthography = st.session_state.get("pending_orthography_editor")
+    pending_transcription = st.session_state.get("pending_transcription_editor")
+
+    if pending_orthography is not None:
+        st.session_state.orthography_editor = pending_orthography
+        st.session_state.pending_orthography_editor = None
+
+    if pending_transcription is not None:
+        st.session_state.transcription_editor = pending_transcription
+        st.session_state.pending_transcription_editor = None
