@@ -217,7 +217,9 @@ def _run_recognition() -> None:
         transcription = build_transcription(orthography, st.session_state.transcription_mode)
 
         st.session_state.orthography_text = orthography
+        st.session_state.orthography_editor = orthography
         st.session_state.transcription_text = transcription
+        st.session_state.transcription_editor = transcription
         st.session_state.segments = result["segments"]
         st.session_state.last_processed_model_key = model_key
         st.session_state.result_timestamp = datetime.now().isoformat()
@@ -237,7 +239,9 @@ def _run_recognition() -> None:
 
 def _clear_text_results() -> None:
     st.session_state.orthography_text = ""
+    st.session_state.orthography_editor = ""
     st.session_state.transcription_text = ""
+    st.session_state.transcription_editor = ""
     st.session_state.segments = []
     st.session_state.result_timestamp = None
     set_status("Результаты очищены. Загруженный файл сохранён.", "info")
@@ -251,22 +255,25 @@ def _render_results() -> None:
     st.text_area(
         "Орфографическая запись",
         height=220,
-        key="orthography_text",
+        key="orthography_editor",
     )
 
     if st.button("Обновить транскрипцию из орфографии", width="stretch"):
-        normalized = normalize_orthography(st.session_state.orthography_text)
+        normalized = normalize_orthography(st.session_state.orthography_editor)
         st.session_state.orthography_text = normalized
+        st.session_state.orthography_editor = normalized
         st.session_state.transcription_text = build_transcription(
             normalized,
             st.session_state.transcription_mode,
         )
+        st.session_state.transcription_editor = st.session_state.transcription_text
         set_status("Транскрипция обновлена из орфографической записи.", "success")
+        st.rerun()
 
     st.text_area(
         "Транскрипция",
         height=220,
-        key="transcription_text",
+        key="transcription_editor",
     )
 
     segments = st.session_state.get("segments", [])
@@ -278,8 +285,10 @@ def _render_results() -> None:
 
 
 def _render_downloads() -> None:
-    orthography = st.session_state.get("orthography_text", "")
-    transcription = st.session_state.get("transcription_text", "")
+    orthography = st.session_state.get("orthography_editor", "")
+    transcription = st.session_state.get("transcription_editor", "")
+    st.session_state.orthography_text = orthography
+    st.session_state.transcription_text = transcription
     payload = build_export_payload()
 
     col1, col2, col3 = st.columns(3)
