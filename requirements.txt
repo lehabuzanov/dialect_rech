@@ -5,7 +5,7 @@ transformers>=4.48.3,<5
 huggingface-hub>=0.29.3,<1
 torch>=2.6,<3
 silero>=0.5.5,<0.6
-numpy>=2.2,<2.3
-av>=14.2,<15
+numpy>=2.3.4,<2.4
+av>=16.1.0,<18
 soundfile==0.13.1
 plotly>=6.0,<7
