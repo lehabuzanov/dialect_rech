@@ -3,18 +3,53 @@ from __future__ import annotations
 import re
 
 
-WORD_RE = re.compile(r"[А-Яа-яЁё-]+")
+TOKEN_RE = re.compile(r"[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)*|\s+|[^А-Яа-яЁё\s]+")
 
-FINAL_DEVOICE_MAP = str.maketrans(
-    {
-        "б": "п",
-        "в": "ф",
-        "г": "к",
-        "д": "т",
-        "ж": "ш",
-        "з": "с",
-    }
-)
+VOWELS = set("аеёиоуыэюя")
+SOFTENERS = set("еёиюяь")
+ALWAYS_HARD = set("жшц")
+ALWAYS_SOFT = set("йчщ")
+
+CONSONANT_MAP = {
+    "б": "b",
+    "в": "v",
+    "г": "g",
+    "д": "d",
+    "ж": "ʐ",
+    "з": "z",
+    "й": "j",
+    "к": "k",
+    "л": "l",
+    "м": "m",
+    "н": "n",
+    "п": "p",
+    "р": "r",
+    "с": "s",
+    "т": "t",
+    "ф": "f",
+    "х": "x",
+    "ц": "t͡s",
+    "ч": "t͡ɕ",
+    "ш": "ʂ",
+    "щ": "ɕː",
+}
+
+VOWEL_MAP = {
+    "а": "a",
+    "е": "e",
+    "ё": "o",
+    "и": "i",
+    "о": "o",
+    "у": "u",
+    "ы": "ɨ",
+    "э": "e",
+    "ю": "u",
+    "я": "a",
+}
+
+DEVOICE_MAP = {"b": "p", "v": "f", "g": "k", "d": "t", "z": "s", "ʐ": "ʂ"}
+VOICE_MAP = {value: key for key, value in DEVOICE_MAP.items()}
+OBSTRUENTS = set(DEVOICE_MAP) | set(DEVOICE_MAP.values()) | {"t͡s", "t͡ɕ", "ɕː", "x"}
 
 
 def normalize_orthography(text: str) -> str:
@@ -29,63 +64,115 @@ def normalize_orthography(text: str) -> str:
 
 def practical_transcription(text: str) -> str:
     normalized = normalize_orthography(text)
-    return WORD_RE.sub(_transcribe_word_match, normalized)
-
-
-def transcription_to_tts_text(text: str) -> str:
-    normalized = text.lower()
-    replacements = {
-        "што": "что",
-        "штобы": "чтобы",
-        "ево": "его",
-        "ова": "ого",
-        "ца": "тся",
-    }
-    words = []
-    for chunk in normalized.split():
-        cleaned = re.sub(r"[^а-яё-]", "", chunk)
-        words.append(replacements.get(cleaned, cleaned or chunk))
-    return normalize_orthography(" ".join(words))
-
-
-def _transcribe_word_match(match: re.Match[str]) -> str:
-    original = match.group(0)
-    lowercase = original.lower()
-    transcribed = _transcribe_word(lowercase)
-
-    if original.isupper():
-        return transcribed.upper()
-    if original[0].isupper():
-        return transcribed.capitalize()
-    return transcribed
+    parts: list[str] = []
+    for token in TOKEN_RE.findall(normalized):
+        if not token:
+            continue
+        if token.isspace():
+            parts.append(token)
+        elif re.search(r"[А-Яа-яЁё]", token):
+            if "-" in token:
+                parts.append("-".join(_transcribe_word(part) for part in token.split("-")))
+            else:
+                parts.append(_transcribe_word(token))
+        else:
+            parts.append(token)
+    return "".join(parts)
 
 
 def _transcribe_word(word: str) -> str:
+    source = _prepare_word(word.lower())
+    phonemes: list[str] = []
+    letters = list(source)
+
+    for index, char in enumerate(letters):
+        prev_char = letters[index - 1] if index > 0 else ""
+        next_char = letters[index + 1] if index + 1 < len(letters) else ""
+
+        if char in {"ь", "ъ"}:
+            continue
+
+        if char in CONSONANT_MAP:
+            base = CONSONANT_MAP[char]
+            if char in ALWAYS_SOFT:
+                phonemes.append(base)
+                continue
+
+            soft = char not in ALWAYS_HARD and next_char in SOFTENERS
+            phonemes.append(_join_phoneme(base, soft))
+            continue
+
+        if char in VOWELS:
+            iotated = char in "еёюя" and (index == 0 or prev_char in VOWELS or prev_char in "ьъ")
+            if iotated:
+                phonemes.append("j")
+
+            if char == "и" and prev_char in ALWAYS_HARD:
+                phonemes.append("ɨ")
+            else:
+                phonemes.append(VOWEL_MAP[char])
+            continue
+
+        phonemes.append(char)
+
+    phonemes = _apply_cluster_assimilation(phonemes)
+    phonemes = _apply_final_devoicing(phonemes)
+    return "".join(phonemes)
+
+
+def _prepare_word(word: str) -> str:
     transformed = word
-    transformed = transformed.replace("что", "што")
-    transformed = transformed.replace("чтобы", "штобы")
-    transformed = transformed.replace("чтоб", "штоб")
-    transformed = re.sub(r"(е|о)го\b", "ево", transformed)
-    transformed = re.sub(r"(е|о)му\b", "ему", transformed)
     transformed = re.sub(r"ться\b", "ца", transformed)
     transformed = re.sub(r"тся\b", "ца", transformed)
-    transformed = re.sub(r"дс", "ц", transformed)
-    transformed = re.sub(r"тс", "ц", transformed)
-    transformed = re.sub(r"сч", "щ", transformed)
-    transformed = re.sub(r"зч", "щ", transformed)
-    transformed = re.sub(r"сш", "ш", transformed)
-    transformed = re.sub(r"зш", "ш", transformed)
-    transformed = re.sub(r"жч", "щ", transformed)
-    transformed = _apply_final_devoicing(transformed)
+    transformed = re.sub(r"ого\b", "ова", transformed)
+    transformed = re.sub(r"его\b", "ева", transformed)
+    transformed = transformed.replace("сч", "щ")
+    transformed = transformed.replace("зч", "щ")
+    transformed = transformed.replace("тч", "ч")
+    transformed = transformed.replace("дч", "ч")
+    transformed = transformed.replace("стн", "сн")
+    transformed = transformed.replace("здн", "зн")
     return transformed
 
 
-def _apply_final_devoicing(word: str) -> str:
-    if not word:
-        return word
-    final = word[-1]
-    devoiced = final.translate(FINAL_DEVOICE_MAP)
-    if devoiced == final:
-        return word
-    return word[:-1] + devoiced
+def _apply_cluster_assimilation(phonemes: list[str]) -> list[str]:
+    updated = phonemes[:]
+    for index in range(len(updated) - 1):
+        current_base, current_soft = _split_phoneme(updated[index])
+        next_base, _ = _split_phoneme(updated[index + 1])
 
+        if current_base not in OBSTRUENTS or next_base not in OBSTRUENTS:
+            continue
+
+        if next_base in DEVOICE_MAP.values() or next_base in {"t͡s", "t͡ɕ", "ɕː", "x"}:
+            current_base = DEVOICE_MAP.get(current_base, current_base)
+        elif next_base in DEVOICE_MAP:
+            current_base = VOICE_MAP.get(current_base, current_base)
+
+        updated[index] = _join_phoneme(current_base, current_soft)
+    return updated
+
+
+def _apply_final_devoicing(phonemes: list[str]) -> list[str]:
+    if not phonemes:
+        return phonemes
+
+    base, soft = _split_phoneme(phonemes[-1])
+    if base in DEVOICE_MAP:
+        phonemes[-1] = _join_phoneme(DEVOICE_MAP[base], soft)
+    return phonemes
+
+
+def _split_phoneme(phoneme: str) -> tuple[str, bool]:
+    if phoneme.endswith("ʲ"):
+        return phoneme[:-1], True
+    return phoneme, False
+
+
+def _join_phoneme(base: str, soft: bool) -> str:
+    if not soft or base in ALWAYS_SOFT_PHONEMES:
+        return base
+    return f"{base}ʲ"
+
+
+ALWAYS_SOFT_PHONEMES = {"j", "t͡ɕ", "ɕː"}

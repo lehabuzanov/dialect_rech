@@ -20,11 +20,9 @@ SESSION_DEFAULTS: dict[str, Any] = {
     "orthography_text": "",
     "transcription_text": "",
     "segments": [],
-    "selected_model_key": "whisper_large_v3_turbo",
+    "selected_model_key": "balanced_medium",
     "last_processed_model_key": None,
     "result_timestamp": None,
-    "tts_orthography_bytes": None,
-    "tts_transcription_bytes": None,
 }
 
 
@@ -77,7 +75,9 @@ def build_export_payload() -> dict[str, Any]:
 
 
 def clear_results(keep_uploaded_file: bool = True) -> None:
-    preserved = {}
+    preserved = {
+        "selected_model_key": st.session_state.get("selected_model_key"),
+    }
     if keep_uploaded_file:
         for key in ("uploaded_file_name", "uploaded_file_bytes", "uploaded_file_path", "audio_info", "waveform_data", "waveform_sr"):
             preserved[key] = st.session_state.get(key)

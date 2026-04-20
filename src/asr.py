@@ -6,60 +6,62 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import streamlit as st
+from faster_whisper import WhisperModel
 
 
-DEFAULT_MODEL_KEY = "whisper_large_v3_turbo"
+DEFAULT_MODEL_KEY = "balanced_medium"
 APP_CACHE_ROOT = Path(tempfile.gettempdir()) / "dialect_rech_cache"
 MODEL_CACHE_ROOT = APP_CACHE_ROOT / "models"
-CT2_CACHE_ROOT = MODEL_CACHE_ROOT / "ctranslate2"
 HF_CACHE_ROOT = APP_CACHE_ROOT / "huggingface"
 
 HF_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+MODEL_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("HF_HOME", str(HF_CACHE_ROOT))
 os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_CACHE_ROOT / "hub"))
-os.environ.setdefault("TRANSFORMERS_CACHE", str(HF_CACHE_ROOT / "transformers"))
-
-from ctranslate2.converters import TransformersConverter
-from faster_whisper import BatchedInferencePipeline, WhisperModel
 
 
 @dataclass(frozen=True, slots=True)
 class ModelConfig:
     key: str
     label: str
-    source_type: str
     model_id: str
     description: str
+    beam_size: int
+    chunk_length: int
 
 
 MODEL_CONFIGS: dict[str, ModelConfig] = {
-    "whisper_large_v3_turbo": ModelConfig(
-        key="whisper_large_v3_turbo",
-        label="openai/whisper-large-v3-turbo",
-        source_type="hf_transformers_convert",
-        model_id="openai/whisper-large-v3-turbo",
-        description="Максимально сильная модель по умолчанию. При первом запуске локально конвертируется в формат faster-whisper.",
+    "turbo_fast": ModelConfig(
+        key="turbo_fast",
+        label="Turbo: быстро и качественно",
+        model_id="mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        description="Самый быстрый вариант высокого класса. Хорош для длинных файлов и облачного запуска.",
+        beam_size=2,
+        chunk_length=24,
     ),
-    "faster_whisper_large_v3": ModelConfig(
-        key="faster_whisper_large_v3",
-        label="Systran/faster-whisper-large-v3",
-        source_type="ct2_direct",
+    "quality_large": ModelConfig(
+        key="quality_large",
+        label="Large v3: максимум качества",
         model_id="Systran/faster-whisper-large-v3",
-        description="Тяжёлая альтернативная модель large-v3 без этапа локальной конвертации.",
+        description="Максимальное качество распознавания, но требует больше памяти и работает медленнее.",
+        beam_size=2,
+        chunk_length=20,
     ),
-    "faster_whisper_medium": ModelConfig(
-        key="faster_whisper_medium",
-        label="Systran/faster-whisper-medium",
-        source_type="ct2_direct",
+    "balanced_medium": ModelConfig(
+        key="balanced_medium",
+        label="Medium: баланс скорости и точности",
         model_id="Systran/faster-whisper-medium",
-        description="Более лёгкий fallback для слабых ПК.",
+        description="Рекомендуемый режим по умолчанию. Обычно стабильнее всего на Streamlit Cloud.",
+        beam_size=3,
+        chunk_length=28,
     ),
-    "faster_whisper_small": ModelConfig(
-        key="faster_whisper_small",
-        label="Systran/faster-whisper-small",
-        source_type="ct2_direct",
+    "fast_small": ModelConfig(
+        key="fast_small",
+        label="Small: самый лёгкий режим",
         model_id="Systran/faster-whisper-small",
-        description="Самый быстрый из встроенных fallback-вариантов, но менее точный.",
+        description="Подходит для слабых машин и быстрой черновой расшифровки.",
+        beam_size=3,
+        chunk_length=30,
     ),
 }
 
@@ -91,65 +93,39 @@ def detect_runtime() -> tuple[str, str]:
 
 
 @st.cache_resource(show_spinner=False)
-def load_whisper_pipeline(model_key: str):
+def load_whisper_model(model_key: str) -> WhisperModel:
     model_config = get_model_config(model_key)
     device, compute_type = detect_runtime()
-    model_path = prepare_model_path(model_config)
-    whisper_model = WhisperModel(model_path, device=device, compute_type=compute_type)
-    return BatchedInferencePipeline(model=whisper_model)
+    cpu_threads = max(1, min(4, os.cpu_count() or 1))
 
-
-def prepare_model_path(model_config: ModelConfig) -> str:
-    if model_config.source_type == "ct2_direct":
-        return model_config.model_id
-    if model_config.source_type == "hf_transformers_convert":
-        return ensure_converted_model(model_config)
-    raise ValueError(f"Неподдерживаемый source_type: {model_config.source_type}")
-
-
-def ensure_converted_model(model_config: ModelConfig) -> str:
-    device, _ = detect_runtime()
-    quantization = "float16" if device == "cuda" else "int8"
-    CT2_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
-    model_dir = CT2_CACHE_ROOT / f"{model_config.model_id.replace('/', '--')}--{quantization}"
-    model_bin = model_dir / "model.bin"
-    tokenizer = model_dir / "tokenizer.json"
-
-    if model_bin.exists() and tokenizer.exists():
-        return str(model_dir)
-
-    model_dir.mkdir(parents=True, exist_ok=True)
-    converter = TransformersConverter(model_name_or_path=model_config.model_id)
-    converter.convert(
-        output_dir=str(model_dir),
-        quantization=quantization,
-        copy_files=["tokenizer.json", "preprocessor_config.json"],
-        force=False,
+    return WhisperModel(
+        model_config.model_id,
+        device=device,
+        compute_type=compute_type,
+        download_root=str(MODEL_CACHE_ROOT),
+        cpu_threads=cpu_threads,
+        num_workers=1,
     )
-    return str(model_dir)
 
 
-def transcribe_audio(
-    audio_path: str,
-    model_key: str,
-    beam_size: int = 5,
-    batch_size: int = 8,
-) -> dict[str, object]:
+def transcribe_audio(audio_path: str, model_key: str) -> dict[str, object]:
     if not os.path.exists(audio_path):
         raise FileNotFoundError("Временный аудиофайл не найден.")
 
-    pipeline = load_whisper_pipeline(model_key)
-    segments, info = pipeline.transcribe(
+    model_config = get_model_config(model_key)
+    model = load_whisper_model(model_key)
+    segments, info = model.transcribe(
         audio_path,
         language="ru",
         task="transcribe",
-        beam_size=beam_size,
-        best_of=max(beam_size, 5),
+        beam_size=model_config.beam_size,
+        best_of=max(3, model_config.beam_size),
         temperature=0.0,
         vad_filter=True,
-        word_timestamps=True,
-        batch_size=batch_size,
         condition_on_previous_text=False,
+        word_timestamps=False,
+        without_timestamps=False,
+        chunk_length=model_config.chunk_length,
     )
 
     segment_items = []
@@ -167,11 +143,11 @@ def transcribe_audio(
             }
         )
 
-    joined_text = " ".join(texts).strip()
     return {
-        "text": joined_text,
+        "text": " ".join(texts).strip(),
         "segments": segment_items,
         "detected_language": getattr(info, "language", None),
         "language_probability": getattr(info, "language_probability", None),
         "duration": getattr(info, "duration", None),
+        "model_label": model_config.label,
     }
