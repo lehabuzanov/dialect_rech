@@ -28,6 +28,7 @@ SESSION_DEFAULTS: dict[str, Any] = {
     "segments": [],
     "selected_model_key": "balanced",
     "transcription_mode": "ru_practical",
+    "theme_mode": "dark_blue",
     "last_processed_model_key": None,
     "result_timestamp": None,
 }

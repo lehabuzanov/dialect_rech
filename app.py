@@ -36,6 +36,7 @@ st.set_page_config(
 def main() -> None:
     init_session_state()
     apply_pending_editor_updates()
+    _apply_theme()
     _render_header()
     _render_sidebar()
     render_status_box()
@@ -65,6 +66,19 @@ def _render_header() -> None:
 
 def _render_sidebar() -> None:
     st.sidebar.header("Настройки распознавания")
+    theme_choices = {
+        "dark_blue": "Тёмно-синяя",
+        "light": "Светлая",
+    }
+    theme_keys = list(theme_choices.keys())
+    theme_index = theme_keys.index(st.session_state.get("theme_mode", "dark_blue"))
+    st.session_state.theme_mode = st.sidebar.radio(
+        "Тема интерфейса",
+        options=theme_keys,
+        index=theme_index,
+        format_func=lambda key: theme_choices[key],
+    )
+
     model_choices = get_model_choices()
     model_keys = list(model_choices.keys())
     current_index = model_keys.index(st.session_state.get("selected_model_key", DEFAULT_MODEL_KEY))
@@ -227,6 +241,7 @@ def _run_recognition() -> None:
         st.session_state.result_timestamp = datetime.now().isoformat()
         progress_bar.progress(100, text="Готово")
         set_status(f"Распознавание завершено. Использована модель: {result['model_label']}.", "success")
+        st.rerun()
     except Exception as exc:
         progress_bar.empty()
         progress_status.empty()
@@ -314,6 +329,84 @@ def _render_downloads() -> None:
         file_name="dialect_transcription_result.json",
         mime="application/json",
         width="stretch",
+    )
+
+
+def _apply_theme() -> None:
+    theme_mode = st.session_state.get("theme_mode", "dark_blue")
+    if theme_mode == "light":
+        st.markdown(
+            """
+            <style>
+            .stApp {
+                background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+                color: #0f172a;
+            }
+            [data-testid="stSidebar"] {
+                background: #ffffff;
+            }
+            [data-testid="stTextArea"] textarea {
+                background: #e9eef6;
+                color: #0f172a;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background:
+                radial-gradient(circle at 15% 20%, rgba(37, 99, 235, 0.18) 0, rgba(37, 99, 235, 0.03) 22%, transparent 23%),
+                radial-gradient(circle at 78% 16%, rgba(59, 130, 246, 0.18) 0, rgba(59, 130, 246, 0.03) 24%, transparent 25%),
+                linear-gradient(180deg, #020617 0%, #071224 50%, #0b1120 100%);
+            color: #e5eefb;
+        }
+        .stApp::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.16;
+            background-image:
+                url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 900'><path d='M0 160 C120 130 160 210 280 180 S460 120 580 170 760 230 880 190 1040 120 1160 170 1320 230 1440 180' fill='none' stroke='%233b82f6' stroke-width='3'/><path d='M0 280 C90 320 180 210 300 250 S510 330 630 285 810 220 930 265 1110 330 1230 285 1350 220 1440 255' fill='none' stroke='%2360a5fa' stroke-width='2.2'/><path d='M0 420 C110 380 210 470 330 420 S520 365 640 430 820 490 940 440 1120 360 1240 420 1360 500 1440 455' fill='none' stroke='%2393c5fd' stroke-width='2'/></svg>");
+            background-repeat: no-repeat;
+            background-size: cover;
+            mix-blend-mode: screen;
+        }
+        [data-testid="stHeader"] {
+            background: transparent;
+        }
+        [data-testid="stSidebar"] {
+            background: rgba(7, 18, 36, 0.88);
+            border-right: 1px solid rgba(96, 165, 250, 0.18);
+        }
+        [data-testid="stSidebar"] * {
+            color: #dbeafe;
+        }
+        [data-testid="stTextArea"] textarea {
+            background: rgba(15, 23, 42, 0.88);
+            color: #eff6ff;
+            border: 1px solid rgba(96, 165, 250, 0.28);
+        }
+        [data-testid="stMetricValue"], [data-testid="stMetricLabel"], .stMarkdown, .stCaption, label, p, h1, h2, h3 {
+            color: #e5eefb !important;
+        }
+        .stButton > button, .stDownloadButton > button {
+            border-radius: 14px;
+            border: 1px solid rgba(96, 165, 250, 0.35);
+            box-shadow: 0 8px 30px rgba(2, 6, 23, 0.35);
+        }
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(90deg, #1d4ed8 0%, #2563eb 100%);
+            color: white;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
 
