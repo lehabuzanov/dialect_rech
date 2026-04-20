@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import streamlit as st
-from ctranslate2.converters import TransformersConverter
-from faster_whisper import BatchedInferencePipeline, WhisperModel
 
 
 DEFAULT_MODEL_KEY = "whisper_large_v3_turbo"
-MODEL_CACHE_ROOT = Path.home() / ".cache" / "dialect_rech" / "models"
+APP_CACHE_ROOT = Path(tempfile.gettempdir()) / "dialect_rech_cache"
+MODEL_CACHE_ROOT = APP_CACHE_ROOT / "models"
 CT2_CACHE_ROOT = MODEL_CACHE_ROOT / "ctranslate2"
+HF_CACHE_ROOT = APP_CACHE_ROOT / "huggingface"
+
+HF_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("HF_HOME", str(HF_CACHE_ROOT))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_CACHE_ROOT / "hub"))
+os.environ.setdefault("TRANSFORMERS_CACHE", str(HF_CACHE_ROOT / "transformers"))
+
+from ctranslate2.converters import TransformersConverter
+from faster_whisper import BatchedInferencePipeline, WhisperModel
 
 
 @dataclass(frozen=True, slots=True)
