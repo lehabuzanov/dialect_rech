@@ -4,6 +4,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import streamlit as st
 from faster_whisper import WhisperModel
@@ -32,29 +33,13 @@ class ModelConfig:
 
 
 MODEL_CONFIGS: dict[str, ModelConfig] = {
-    "light": ModelConfig(
-        key="light",
-        label="Лёгкая: быстро",
-        model_id="Systran/faster-whisper-small",
-        description="Самый лёгкий и быстрый режим. Подходит для черновой расшифровки и длинных файлов.",
-        beam_size=2,
-        chunk_length=28,
-    ),
     "balanced": ModelConfig(
         key="balanced",
-        label="Сбалансированная: качество и стабильность",
+        label="Стабильная модель",
         model_id="Systran/faster-whisper-medium",
-        description="Рекомендуемый режим по умолчанию. Лучший баланс точности, скорости и стабильности.",
+        description="Основной практичный режим: лучший баланс качества, скорости и стабильности для Streamlit Cloud.",
         beam_size=3,
         chunk_length=24,
-    ),
-    "accurate": ModelConfig(
-        key="accurate",
-        label="Точная: улучшенное качество",
-        model_id="Systran/faster-whisper-large-v2",
-        description="Более тяжёлая multilingual-модель для лучшего качества. Медленнее, но стабильнее turbo-вариантов.",
-        beam_size=2,
-        chunk_length=18,
     ),
 }
 
@@ -75,13 +60,6 @@ def get_model_config(model_key: str) -> ModelConfig:
 
 
 def detect_runtime() -> tuple[str, str]:
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            return "cuda", "float16"
-    except Exception:
-        pass
     return "cpu", "int8"
 
 
@@ -101,50 +79,24 @@ def load_whisper_model(model_key: str) -> WhisperModel:
     )
 
 
-def transcribe_audio(audio_path: str, model_key: str) -> dict[str, object]:
+def transcribe_audio(
+    audio_path: str,
+    model_key: str,
+    duration_seconds: float,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> dict[str, object]:
     if not os.path.exists(audio_path):
         raise FileNotFoundError("Временный аудиофайл не найден.")
 
     model_config = get_model_config(model_key)
-    try:
-        model = load_whisper_model(model_key)
-        segments, info = _transcribe_with_model(model, audio_path, model_config)
-        used_model = model_config
-    except Exception:
-        if model_key == DEFAULT_MODEL_KEY:
-            raise
-        fallback_config = get_model_config(DEFAULT_MODEL_KEY)
-        model = load_whisper_model(DEFAULT_MODEL_KEY)
-        segments, info = _transcribe_with_model(model, audio_path, fallback_config)
-        used_model = fallback_config
+    if progress_callback:
+        progress_callback(5, "Загрузка модели распознавания")
 
-    segment_items = []
-    texts = []
-    for segment in segments:
-        cleaned = segment.text.strip()
-        if not cleaned:
-            continue
-        texts.append(cleaned)
-        segment_items.append(
-            {
-                "start": round(segment.start, 2),
-                "end": round(segment.end, 2),
-                "text": cleaned,
-            }
-        )
+    model = load_whisper_model(model_key)
+    if progress_callback:
+        progress_callback(15, "Модель загружена, начинаю распознавание")
 
-    return {
-        "text": " ".join(texts).strip(),
-        "segments": segment_items,
-        "detected_language": getattr(info, "language", None),
-        "language_probability": getattr(info, "language_probability", None),
-        "duration": getattr(info, "duration", None),
-        "model_label": used_model.label,
-    }
-
-
-def _transcribe_with_model(model: WhisperModel, audio_path: str, model_config: ModelConfig):
-    return model.transcribe(
+    segments, info = model.transcribe(
         audio_path,
         language="ru",
         task="transcribe",
@@ -157,3 +109,36 @@ def _transcribe_with_model(model: WhisperModel, audio_path: str, model_config: M
         without_timestamps=False,
         chunk_length=model_config.chunk_length,
     )
+
+    segment_items = []
+    texts = []
+    total_duration = max(duration_seconds, 0.1)
+
+    for segment in segments:
+        cleaned = segment.text.strip()
+        if cleaned:
+            texts.append(cleaned)
+            segment_items.append(
+                {
+                    "start": round(segment.start, 2),
+                    "end": round(segment.end, 2),
+                    "text": cleaned,
+                }
+            )
+
+        if progress_callback:
+            ratio = min(1.0, float(segment.end) / total_duration)
+            percent = min(95, 15 + int(ratio * 80))
+            progress_callback(percent, f"Распознавание: {percent}%")
+
+    if progress_callback:
+        progress_callback(100, "Распознавание завершено")
+
+    return {
+        "text": " ".join(texts).strip(),
+        "segments": segment_items,
+        "detected_language": getattr(info, "language", None),
+        "language_probability": getattr(info, "language_probability", None),
+        "duration": getattr(info, "duration", None),
+        "model_label": model_config.label,
+    }

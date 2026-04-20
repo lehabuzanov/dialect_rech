@@ -10,6 +10,7 @@ from typing import Iterable
 import av
 import numpy as np
 import plotly.graph_objects as go
+import soundfile as sf
 
 
 SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
@@ -159,6 +160,23 @@ def persist_uploaded_file(file_bytes: bytes, suffix: str) -> str:
         return tmp_file.name
 
 
+def persist_audio_segment_wav(
+    waveform: np.ndarray,
+    sample_rate: int,
+    start_seconds: float,
+    end_seconds: float,
+) -> str:
+    start_index = max(0, int(start_seconds * sample_rate))
+    end_index = min(waveform.size, int(end_seconds * sample_rate))
+    if end_index <= start_index:
+        raise ValueError("Некорректный диапазон времени для распознавания.")
+
+    segment = waveform[start_index:end_index]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        sf.write(tmp_file.name, segment, sample_rate, format="WAV")
+        return tmp_file.name
+
+
 def format_size(size_bytes: int) -> str:
     if size_bytes < 1024:
         return f"{size_bytes} Б"
@@ -207,4 +225,3 @@ def _resolve_duration_seconds(
         return float(audio_stream.duration * audio_stream.time_base)
 
     raise ValueError("Не удалось определить длительность аудиофайла.")
-

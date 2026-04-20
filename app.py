@@ -11,6 +11,7 @@ from src.audio_utils import (
     cleanup_temp_file,
     decode_audio_waveform,
     inspect_audio_bytes,
+    persist_audio_segment_wav,
     persist_uploaded_file,
 )
 from src.transcription import build_transcription, get_transcription_modes, normalize_orthography
@@ -66,11 +67,12 @@ def _render_sidebar() -> None:
     model_keys = list(model_choices.keys())
     current_index = model_keys.index(st.session_state.get("selected_model_key", DEFAULT_MODEL_KEY))
     selected_key = st.sidebar.selectbox(
-        "Модель распознавания",
+        "Режим распознавания",
         options=model_keys,
         index=current_index,
         format_func=lambda key: model_choices[key],
-        help="Выбранная модель действительно используется при нажатии кнопки распознавания.",
+        disabled=True,
+        help="Оставлен один наиболее стабильный и практичный режим.",
     )
     st.session_state.selected_model_key = selected_key
     st.sidebar.caption(get_model_description(selected_key))
@@ -126,6 +128,8 @@ def _handle_file_upload() -> None:
     st.session_state.audio_info = audio_info
     st.session_state.waveform_data = waveform
     st.session_state.waveform_sr = waveform_sr
+    st.session_state.selection_start = 0.0
+    st.session_state.selection_end = float(audio_info.duration_seconds)
     set_status("Файл загружен и готов к распознаванию.", "success")
 
 
@@ -141,6 +145,20 @@ def _render_loaded_audio() -> None:
     st.subheader("Исходный файл")
     render_audio_info(audio_info)
     st.audio(file_bytes, format=audio_info.mime_type)
+
+    st.markdown("**Диапазон распознавания**")
+    range_values = st.slider(
+        "Выберите фрагмент аудио",
+        min_value=0.0,
+        max_value=float(audio_info.duration_seconds),
+        value=(
+            float(st.session_state.get("selection_start", 0.0)),
+            float(st.session_state.get("selection_end", audio_info.duration_seconds)),
+        ),
+        step=0.5,
+    )
+    st.session_state.selection_start = float(range_values[0])
+    st.session_state.selection_end = float(range_values[1])
 
     if waveform is not None and waveform_sr:
         figure = build_waveform_figure(waveform, waveform_sr)
@@ -159,15 +177,42 @@ def _render_actions() -> None:
 
 
 def _run_recognition() -> None:
-    audio_path = st.session_state.get("uploaded_file_path")
+    source_audio_path = st.session_state.get("uploaded_file_path")
     model_key = st.session_state.get("selected_model_key", DEFAULT_MODEL_KEY)
-    if not audio_path:
+    if not source_audio_path:
         set_status("Сначала загрузите аудиофайл.", "warning")
         return
 
+    selection_start = float(st.session_state.get("selection_start", 0.0))
+    selection_end = float(st.session_state.get("selection_end", 0.0))
+    waveform = st.session_state.get("waveform_data")
+    waveform_sr = st.session_state.get("waveform_sr")
+    if waveform is None or waveform_sr is None:
+        set_status("Не удалось подготовить аудио для распознавания.", "error")
+        return
+
+    progress_bar = st.progress(0, text="Подготовка распознавания")
+    progress_status = st.empty()
+    segment_path = None
+
+    def update_progress(percent: int, message: str) -> None:
+        progress_bar.progress(percent, text=message)
+        progress_status.caption(message)
+
     try:
-        with st.spinner("Распознаю аудио..."):
-            result = transcribe_audio(audio_path, model_key=model_key)
+        update_progress(2, "Подготовка выбранного фрагмента")
+        segment_path = persist_audio_segment_wav(
+            waveform,
+            waveform_sr,
+            selection_start,
+            selection_end,
+        )
+        result = transcribe_audio(
+            segment_path,
+            model_key=model_key,
+            duration_seconds=max(0.1, selection_end - selection_start),
+            progress_callback=update_progress,
+        )
         orthography = normalize_orthography(str(result["text"]))
         transcription = build_transcription(orthography, st.session_state.transcription_mode)
 
@@ -176,12 +221,18 @@ def _run_recognition() -> None:
         st.session_state.segments = result["segments"]
         st.session_state.last_processed_model_key = model_key
         st.session_state.result_timestamp = datetime.now().isoformat()
+        progress_bar.progress(100, text="Готово")
         set_status(f"Распознавание завершено. Использована модель: {result['model_label']}.", "success")
     except Exception as exc:
+        progress_bar.empty()
+        progress_status.empty()
         set_status(
-            f"Ошибка распознавания: {exc}. Попробуйте более лёгкую модель из списка.",
+            f"Ошибка распознавания: {exc}.",
             "error",
         )
+        cleanup_temp_file(segment_path)
+        return
+    cleanup_temp_file(segment_path)
 
 
 def _clear_text_results() -> None:

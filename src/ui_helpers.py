@@ -17,6 +17,8 @@ SESSION_DEFAULTS: dict[str, Any] = {
     "audio_info": None,
     "waveform_data": None,
     "waveform_sr": None,
+    "selection_start": 0.0,
+    "selection_end": 0.0,
     "orthography_text": "",
     "transcription_text": "",
     "segments": [],
